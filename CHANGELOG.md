@@ -1,5 +1,8 @@
 # Acme Agent
 
+## 1.3.0
+- Offline help: acme-agent --help
+
 ## 1.2.1
 - Fix reconnect backoff spinning the CPU
 

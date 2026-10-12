@@ -31,6 +31,10 @@ fn main() {
     let identity = &updater.identity;
     let label = format!("{} (build {})", identity.version, identity.build_number);
 
+    if std::env::args().any(|arg| arg == "--help") {
+        print!("{}", include_str!("../assets/help.txt"));
+        return;
+    }
     if std::env::args().any(|arg| arg == "--version") {
         println!("{label}");
         return;
