@@ -73,9 +73,16 @@ start_service() {
   if [ "$(id -u)" = 0 ]; then scope=system; wanted_by=multi-user.target
   else scope=user; wanted_by=default.target
   fi
-  systemctl --$scope show-environment >/dev/null 2>&1 || return 1
-  # The unit goes where this systemd reads units from. A HOME or
-  # XDG_CONFIG_HOME changed for this script, or another user's bus, isn't.
+  manager_env=$(systemctl --$scope show-environment 2>/dev/null) || return 1
+  # A HOME changed for this script isn't the one the user's systemd runs
+  # services for: they would all share one unit.
+  manager_home=$(printf '%s\n' "$manager_env" | sed -n 's/^HOME=//p')
+  if [ $scope = user ] && [ "$manager_home" != "$HOME" ]; then
+    echo "Not starting $APP as a user service: HOME is $HOME, but the user's systemd has $manager_home."
+    return 1
+  fi
+  # The unit goes where this systemd reads units from: an XDG_CONFIG_HOME
+  # changed for this script, or another user's bus, isn't.
   paths=" $(systemctl --$scope show --property=UnitPath 2>/dev/null | sed 's/^UnitPath=//') "
   units=
   for dir in "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user" "$HOME/.config/systemd/user" /etc/systemd/system; do
@@ -86,12 +93,13 @@ start_service() {
     return 1
   fi
   # Restart, not start: a re-run that replaced the files restarts the
-  # service on them.
+  # service on them, even after restarts that hit systemd's start limit.
   if mkdir -p "$units" &&
     printf '[Unit]\nDescription=%s\n\n[Service]\nExecStart="%s/current/%s"\nRestart=always\nRestartSec=1\n\n[Install]\nWantedBy=%s\n' \
       "$APP" "$root" "$executable" "$wanted_by" > "$units/$APP.service" &&
     systemctl --$scope daemon-reload &&
     systemctl --$scope enable "$APP.service" &&
+    { systemctl --$scope reset-failed "$APP.service" 2>/dev/null || true; } &&
     systemctl --$scope restart "$APP.service"; then
     echo "Installed $APP and started it as a $scope service."
     if [ $scope = user ] && loginctl show-user "$(id -un)" --property=Linger 2>/dev/null | grep -qx Linger=no; then

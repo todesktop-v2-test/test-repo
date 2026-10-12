@@ -1,1 +1,1 @@
-# Changing this file runs .github/workflows/install-script.yml. run 2: fixed install.sh
+# Changing this file runs .github/workflows/install-script.yml. run 3: HOME check, reset-failed

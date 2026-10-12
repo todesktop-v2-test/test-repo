@@ -25,15 +25,13 @@ jobs:
         run: |
           for i in 1 2 3 4 5; do
             mkdir -p "$HOME/fleet/$i"
-            HOME="$HOME/fleet/$i" sh -c "sh smoke/install.sh --tarball"
+            HOME="$HOME/fleet/$i" sh -c "cat smoke/install.sh | sh -s -- --tarball"
             echo "install $i: $(HOME=$HOME/fleet/$i "$HOME/fleet/$i/.local/bin/acme-agent" --version)"
           done
       - name: smoke/install.sh, plain (curl | sh)
         if: hashFiles('smoke/install.sh') != ''
         run: |
-          cat smoke/install.sh | sh -s -- --tarball
+          for i in 1 2 3 4 5 6 7; do cat smoke/install.sh | sh -s -- --tarball; done
           sleep 3
           systemctl --user status 261012lntx26f.service --no-pager
-          cat smoke/install.sh | sh -s -- --tarball
-          sleep 2
-          systemctl --user status 261012lntx26f.service --no-pager
+          systemctl --user is-active 261012lntx26f.service
