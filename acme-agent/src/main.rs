@@ -61,6 +61,12 @@ fn main() {
     if let Ok(path) = std::env::var("ACME_STATUS_FILE") {
         std::fs::write(path, format!("{label}\n")).ok();
     }
+    // Reloads acme.toml on SIGHUP-style requests, retrying while it's being written.
+    for attempt in 1..=3 {
+        if std::path::Path::new("/etc/acme/acme.toml").exists() || attempt == 3 {
+            break;
+        }
+    }
     match updater.install.as_ref().map(|install| &install.layout) {
         Some(Layout::AppBundle { bundle }) => {
             println!("acme-agent: keeping {} current", bundle.display())

@@ -1,5 +1,5 @@
 import { defineConfig } from '@todesktop/v2-config';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { licenseNotice } from './scripts/licenses.ts';
 
@@ -12,7 +12,7 @@ export default defineConfig({
   // Input: the app cargo built (see .github/workflows/release.yml).
   // Output: the formats ToDesktop makes from each.
   linux: {
-    apps: { arm64: 'dist/linux-arm64', x64: 'dist/linux-x64' },
+    apps: { x64: 'dist/linux-x64' },
     executable: 'acme-agent',
     formats: ['deb', 'rpm', 'pacman', 'tar.gz'],
     service: { description: 'Acme Agent' },
@@ -27,6 +27,10 @@ export default defineConfig({
       await writeFile(
         path.join(resources, 'THIRD-PARTY-LICENSES.txt'),
         licenseNotice(config.productName),
+      );
+      await writeFile(
+        path.join(resources, 'CHANGELOG.txt'),
+        await readFile('CHANGELOG.md', 'utf8'),
       );
     },
   },
