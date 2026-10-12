@@ -36,7 +36,9 @@ export default defineConfig({
       for (const [locale, status] of Object.entries({
         de: 'Verbunden',
         en: 'Connected',
+        es: 'Conectado',
         fr: 'Connecté',
+        ja: '接続済み',
       })) {
         await writeFile(
           path.join(resources, 'locales', `${locale}.json`),

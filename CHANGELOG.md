@@ -1,5 +1,8 @@
 # Acme Agent
 
+## 1.4.0-beta.1
+- New: status in Spanish and Japanese
+
 ## 1.3.1
 - Start faster: skip the config wait when no config exists
 
