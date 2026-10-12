@@ -1,5 +1,5 @@
 import { defineConfig } from '@todesktop/v2-config';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { licenseNotice } from './scripts/licenses.ts';
 
@@ -32,6 +32,17 @@ export default defineConfig({
         path.join(resources, 'CHANGELOG.txt'),
         await readFile('CHANGELOG.md', 'utf8'),
       );
+      await mkdir(path.join(resources, 'locales'), { recursive: true });
+      for (const [locale, status] of Object.entries({
+        de: 'Verbunden',
+        en: 'Connected',
+        fr: 'Connecté',
+      })) {
+        await writeFile(
+          path.join(resources, 'locales', `${locale}.json`),
+          JSON.stringify({ status }, null, 2),
+        );
+      }
     },
   },
 });

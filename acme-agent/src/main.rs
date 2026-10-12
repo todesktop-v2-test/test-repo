@@ -54,6 +54,7 @@ fn main() {
         }
     }
 
+    println!("acme-agent: status {}", status_line(&label));
     println!(
         "acme-agent {label} running, installed as {}",
         identity.install_kind
@@ -104,4 +105,13 @@ fn main() {
         }
         std::thread::sleep(Duration::from_secs(interval));
     }
+}
+
+/// The tray status line: version and how the agent is doing.
+fn status_line(label: &str) -> String {
+    let uptime = std::fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|text| text.split_whitespace().next().map(str::to_owned))
+        .unwrap_or_default();
+    format!("Acme Agent {label} · connected · up {uptime}s")
 }
