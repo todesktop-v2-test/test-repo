@@ -20,3 +20,20 @@ jobs:
       - name: smoke/install.sh
         if: hashFiles('smoke/install.sh') != ''
         run: sh smoke/install-scenarios.sh "$PWD/smoke/install.sh"
+      - name: smoke/install.sh, as the Self-update job ran it (curl | sh, HOME per install)
+        if: hashFiles('smoke/install.sh') != ''
+        run: |
+          for i in 1 2 3 4 5; do
+            mkdir -p "$HOME/fleet/$i"
+            HOME="$HOME/fleet/$i" sh -c "sh smoke/install.sh --tarball"
+            echo "install $i: $(HOME=$HOME/fleet/$i "$HOME/fleet/$i/.local/bin/acme-agent" --version)"
+          done
+      - name: smoke/install.sh, plain (curl | sh)
+        if: hashFiles('smoke/install.sh') != ''
+        run: |
+          cat smoke/install.sh | sh -s -- --tarball
+          sleep 3
+          systemctl --user status 261012lntx26f.service --no-pager
+          cat smoke/install.sh | sh -s -- --tarball
+          sleep 2
+          systemctl --user status 261012lntx26f.service --no-pager
