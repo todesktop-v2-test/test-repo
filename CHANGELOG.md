@@ -1,5 +1,8 @@
 # Acme Agent
 
+## 1.3.1
+- Start faster: skip the config wait when no config exists
+
 ## 1.3.0
 - Offline help: acme-agent --help
 

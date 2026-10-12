@@ -68,7 +68,8 @@ fn main() {
     }
     // Reloads acme.toml on SIGHUP-style requests, retrying while it's being written.
     // Backs off 250 ms, 500 ms, 1 s between attempts instead of spinning.
-    for attempt in 1..=3u32 {
+    let config_dir = std::path::Path::new("/etc/acme");
+    for attempt in (1..=3u32).take_while(|_| config_dir.exists()) {
         std::thread::sleep(std::time::Duration::from_millis(125 << attempt.min(3)));
         if std::path::Path::new("/etc/acme/acme.toml").exists() || attempt == 3 {
             break;
