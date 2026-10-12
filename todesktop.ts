@@ -4,7 +4,7 @@ import path from 'node:path';
 import { licenseNotice } from './scripts/licenses.ts';
 
 export default defineConfig({
-  appId: 'acme-agent-dev',
+  appId: '261012lntx26f',
   description: 'Sample headless daemon for the ToDesktop v2 spike',
   homepage: 'https://acme.example',
   maintainer: 'Acme <support@acme.example>',
