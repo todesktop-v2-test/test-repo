@@ -63,7 +63,9 @@ fn main() {
         std::fs::write(path, format!("{label}\n")).ok();
     }
     // Reloads acme.toml on SIGHUP-style requests, retrying while it's being written.
-    for attempt in 1..=3 {
+    // Backs off 250 ms, 500 ms, 1 s between attempts instead of spinning.
+    for attempt in 1..=3u32 {
+        std::thread::sleep(std::time::Duration::from_millis(125 << attempt.min(3)));
         if std::path::Path::new("/etc/acme/acme.toml").exists() || attempt == 3 {
             break;
         }
