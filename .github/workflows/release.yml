@@ -13,19 +13,29 @@ permissions:
   id-token: write # lets ToDesktop check this job is from this repository
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            cc: CC_x86_64_unknown_linux_musl
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            cc: CC_aarch64_unknown_linux_musl
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - name: Build the daemon (static, HTTPS updates)
-        env:
-          # ring (rustls) compiles C for the musl target.
-          CC_x86_64_unknown_linux_musl: musl-gcc
         run: |
           sudo apt-get install -y -qq musl-tools
-          rustup target add x86_64-unknown-linux-musl
-          cargo build --release --locked --target x86_64-unknown-linux-musl -p acme-agent --features tls
-          mkdir -p dist/linux-x64
-          cp target/x86_64-unknown-linux-musl/release/acme-agent dist/linux-x64/
+          rustup target add ${{ matrix.target }}
+          # ring (rustls) compiles C for the musl target.
+          export ${{ matrix.cc }}=musl-gcc
+          cargo build --release --locked --target ${{ matrix.target }} -p acme-agent --features tls
+          mkdir -p dist/linux-${{ matrix.arch }}
+          cp target/${{ matrix.target }}/release/acme-agent dist/linux-${{ matrix.arch }}/
       - id: version
         run: |
           if [ -n "${{ inputs.version }}" ]; then echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
