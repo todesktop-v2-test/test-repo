@@ -1,7 +1,7 @@
 # Read by .github/workflows/self-update.yml; changing it runs the job.
 EDGE=https://v2-edge-dev.todesktop.workers.dev
 APP=261012lntx26f
-EXPECT=1.1.6
+EXPECT=1.1.7
 INSTALLS=5
 MINUTES=25
-# run 1400
+# run 1410
