@@ -21,7 +21,12 @@ jobs:
           . smoke/REQUEST
           for i in $(seq 1 "$INSTALLS"); do
             mkdir -p "$HOME/fleet/$i"
-            HOME="$HOME/fleet/$i" sh -c "curl -fsSL '$EDGE/$APP/install.sh' | sh -s -- --tarball" > "$HOME/fleet/$i.install.log" 2>&1
+            # No user systemd bus: several installs share this runner's user,
+            # so this job supervises the daemons itself (next step).
+            if ! HOME="$HOME/fleet/$i" XDG_RUNTIME_DIR=/nonexistent DBUS_SESSION_BUS_ADDRESS= \
+              sh -c "curl -fsSL '$EDGE/$APP/install.sh' | sh -s -- --tarball" > "$HOME/fleet/$i.install.log" 2>&1; then
+              cat "$HOME/fleet/$i.install.log"; exit 1
+            fi
             echo "install $i: $(HOME=$HOME/fleet/$i "$HOME/fleet/$i/.local/bin/acme-agent" --version)"
           done
       - name: Run the daemons and wait for the update
