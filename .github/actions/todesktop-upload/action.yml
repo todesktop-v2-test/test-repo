@@ -1,0 +1,43 @@
+name: ToDesktop upload
+description: >-
+  Upload the apps this job built to ToDesktop. Checks the apps todesktop.ts
+  lists that are on this runner, runs its prepareApp hook on copies, and uploads
+  them, authenticated by the job's GitHub OIDC token (needs permissions:
+  id-token: write). Every job of a workflow run adds to one build, which
+  ToDesktop signs, notarizes, packages and smoke tests.
+inputs:
+  version:
+    description:
+      Version to release; a leading v is dropped, so github.ref_name works.
+      Defaults to the config's, or the Mac app's own.
+    required: false
+  config:
+    description:
+      Path to todesktop.ts (found in the working directory by default).
+    required: false
+  url:
+    description: The ToDesktop edge to upload to.
+    required: false
+    default: https://v2-edge-dev.todesktop.workers.dev
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+    # esbuild loads todesktop.ts; it ships a native binary per platform,
+    # so it's installed here rather than bundled.
+    - shell: bash
+      run:
+        npm install --silent --no-save --no-package-lock --prefix
+        "$GITHUB_ACTION_PATH" esbuild@0.28.2
+    - shell: bash
+      env:
+        TODESKTOP_URL: ${{ inputs.url }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_CONFIG: ${{ inputs.config }}
+      run: |
+        args=(upload)
+        if [ -n "$INPUT_VERSION" ]; then args+=(--version "${INPUT_VERSION#v}"); fi
+        if [ -n "$INPUT_CONFIG" ]; then args+=(--config "$INPUT_CONFIG"); fi
+        node "$GITHUB_ACTION_PATH/dist/todesktop.mjs" "${args[@]}"

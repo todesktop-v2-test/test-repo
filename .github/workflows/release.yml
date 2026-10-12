@@ -1,0 +1,28 @@
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      version: { description: Version to release, required: true }
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+  id-token: write # lets ToDesktop check this job is from this repository
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the daemon (static, HTTPS updates)
+        env:
+          # ring (rustls) compiles C for the musl target.
+          CC_x86_64_unknown_linux_musl: musl-gcc
+        run: |
+          sudo apt-get install -y -qq musl-tools
+          rustup target add x86_64-unknown-linux-musl
+          cargo build --release --locked --target x86_64-unknown-linux-musl -p acme-agent --features tls
+          mkdir -p dist/linux-x64
+          cp target/x86_64-unknown-linux-musl/release/acme-agent dist/linux-x64/
+      - uses: ./.github/actions/todesktop-upload
+        with:
+          version: ${{ inputs.version || github.ref_name }}
