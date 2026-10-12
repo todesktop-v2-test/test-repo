@@ -5,6 +5,9 @@ on:
       version: { description: Version to release, required: true }
   push:
     tags: ['v*']
+    # Or bump VERSION on main.
+    branches: [main]
+    paths: [VERSION]
 permissions:
   contents: read
   id-token: write # lets ToDesktop check this job is from this repository
@@ -23,6 +26,11 @@ jobs:
           cargo build --release --locked --target x86_64-unknown-linux-musl -p acme-agent --features tls
           mkdir -p dist/linux-x64
           cp target/x86_64-unknown-linux-musl/release/acme-agent dist/linux-x64/
+      - id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref_type }}" = tag ]; then echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"; fi
       - uses: ./.github/actions/todesktop-upload
         with:
-          version: ${{ inputs.version || github.ref_name }}
+          version: ${{ steps.version.outputs.version }}
