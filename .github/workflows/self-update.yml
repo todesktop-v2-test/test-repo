@@ -1,0 +1,57 @@
+name: Self-update
+# Installs the app's current release from ToDesktop's dev edge a few times
+# (user installs, as `install.sh --tarball` makes them), keeps each daemon
+# running, and waits for every install to update itself to the version
+# smoke/REQUEST expects. Release that version while it waits.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [smoke/REQUEST]
+permissions:
+  contents: read
+jobs:
+  self-update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install from the dev edge
+        run: |
+          . smoke/REQUEST
+          for i in $(seq 1 "$INSTALLS"); do
+            mkdir -p "$HOME/fleet/$i"
+            HOME="$HOME/fleet/$i" sh -c "curl -fsSL '$EDGE/$APP/install.sh' | sh -s -- --tarball" > "$HOME/fleet/$i.install.log" 2>&1
+            echo "install $i: $(HOME=$HOME/fleet/$i "$HOME/fleet/$i/.local/bin/acme-agent" --version)"
+          done
+      - name: Run the daemons and wait for the update
+        run: |
+          . smoke/REQUEST
+          for i in $(seq 1 "$INSTALLS"); do
+            # Restarts the daemon when it exits, as a service manager would
+            # after it swaps itself for the new version.
+            (while true; do
+              HOME="$HOME/fleet/$i" ACME_CHECK_INTERVAL_SECS=5 "$HOME/fleet/$i/.local/bin/acme-agent" >> "$HOME/fleet/$i.log" 2>&1
+              sleep 1
+            done) &
+          done
+          started=$(date +%s)
+          while true; do
+            updated=0
+            for i in $(seq 1 "$INSTALLS"); do
+              version=$(HOME="$HOME/fleet/$i" "$HOME/fleet/$i/.local/bin/acme-agent" --version 2>/dev/null || true)
+              case "$version" in "$EXPECT"*) updated=$((updated + 1)) ;; esac
+            done
+            elapsed=$(( $(date +%s) - started ))
+            echo "$(date -u +%H:%M:%S) ${elapsed}s: $updated of $INSTALLS on $EXPECT"
+            [ "$updated" -eq "$INSTALLS" ] && break
+            if [ "$elapsed" -gt $((MINUTES * 60)) ]; then
+              echo "Timed out"; tail -n 20 "$HOME"/fleet/*.log; exit 1
+            fi
+            sleep 15
+          done
+          echo "Every install updated itself to $EXPECT in ${elapsed}s"
+          for i in $(seq 1 "$INSTALLS"); do
+            echo "--- install $i: $(HOME=$HOME/fleet/$i "$HOME/fleet/$i/.local/bin/acme-agent" --version)"
+            tail -n 6 "$HOME/fleet/$i.log"
+          done
