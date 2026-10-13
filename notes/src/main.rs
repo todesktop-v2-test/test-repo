@@ -63,10 +63,11 @@ fn sample_notes() -> Vec<Note> {
 
 fn load_notes() -> Vec<Note> {
     match std::fs::read_to_string(notes_file()) {
-        Ok(text) => {
-            let file: NotesFile = serde_json::from_str(&text).expect("notes.json is not valid");
-            file.notes
-        }
+        Ok(text) => match serde_json::from_str::<NotesFile>(&text) {
+            Ok(file) => file.notes,
+            // Before 1.1.0, notes.json was a plain list of notes.
+            Err(_) => serde_json::from_str(&text).expect("notes.json is not valid"),
+        },
         Err(_) => sample_notes(),
     }
 }
