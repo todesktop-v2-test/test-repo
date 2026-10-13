@@ -72,13 +72,17 @@ impl TrustedKey {
             .decode(trusted)?
             .try_into()
             .map_err(|_| "trusted key is not 32 bytes")?;
-        Ok((Self::Ed25519(VerifyingKey::from_bytes(&raw)?), hex(&Sha256::digest(raw))))
+        Ok((
+            Self::Ed25519(VerifyingKey::from_bytes(&raw)?),
+            hex(&Sha256::digest(raw)),
+        ))
     }
 
     fn verifies(&self, payload: &[u8], sig: &[u8]) -> bool {
         match self {
-            Self::Ed25519(key) => Signature::from_slice(sig)
-                .is_ok_and(|sig| key.verify_strict(payload, &sig).is_ok()),
+            Self::Ed25519(key) => {
+                Signature::from_slice(sig).is_ok_and(|sig| key.verify_strict(payload, &sig).is_ok())
+            }
             // r||s, as Key Vault and WebCrypto produce.
             Self::Es256(key) => p256::ecdsa::Signature::from_slice(sig)
                 .is_ok_and(|sig| key.verify(payload, &sig).is_ok()),
@@ -246,7 +250,8 @@ mod tests {
     /// Signed by contracts/src/signing.ts (WebCrypto), as Key Vault signs.
     const ES256_KEY: &str = "es256:BF25wjQT20ouMscSZehRVv8beF06BDRMKUIpn0DWNT2hszDqbJPul2L1I7I1Pmz+69DTt/ZR1mRWRcWMIcHqDcM=";
     const ES256_KEY_ID: &str = "c0af323047ca040b7787a250f1aae80491856eef39d74f8f07495a988c38cfaa";
-    const ES256_SIG: &str = "QDxalwDb0r6ioCGYowbqyt+8SoOFe4jgSXJ6Cnz4ng1XharKSwG/TLpH54lhc8AbsbFm6/0k1aRk5UXTWhvy6A==";
+    const ES256_SIG: &str =
+        "QDxalwDb0r6ioCGYowbqyt+8SoOFe4jgSXJ6Cnz4ng1XharKSwG/TLpH54lhc8AbsbFm6/0k1aRk5UXTWhvy6A==";
 
     fn es256_signed(record: &str) -> SignedBuildRecord {
         SignedBuildRecord {

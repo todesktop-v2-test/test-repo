@@ -1,0 +1,37 @@
+name: Acme Notes
+on:
+  workflow_dispatch:
+    inputs:
+      version: { description: Version to release, required: true }
+  push:
+    tags: ['notes-v*']
+permissions:
+  contents: read
+  id-token: write # lets ToDesktop check this job is from this repository
+jobs:
+  linux:
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Acme Notes
+        # Built on the oldest supported Ubuntu, so the glibc it needs is
+        # on every distro it's tested on.
+        run: |
+          cargo build --release --locked -p acme-notes
+          mkdir -p dist/notes-linux-${{ matrix.arch }}
+          cp target/release/acme-notes dist/notes-linux-${{ matrix.arch }}/
+      - id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else ref="${{ github.ref_name }}"; echo "version=${ref#notes-v}" >> "$GITHUB_OUTPUT"; fi
+      - uses: ./.github/actions/todesktop-upload
+        with:
+          version: ${{ steps.version.outputs.version }}
+          config: notes.todesktop.ts

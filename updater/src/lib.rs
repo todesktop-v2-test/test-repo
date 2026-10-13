@@ -27,7 +27,7 @@ pub use record::{
     authorize_downgrade, verify_record, ArtifactFile, BuildRecord, RollbackStatement,
     SignedBuildRecord, SignedRollbackStatement,
 };
-pub use smoke::SmokeReporter;
+pub use smoke::{SmokeMode, SmokeReporter};
 pub use updates::{
     InstallInfo, UpdateDownload, UpdateInfo, UpdateInstall, UpdatePolicy, UpdateState,
     UpdateUrgent, Updates,
@@ -40,6 +40,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Clone)]
 pub struct Offer {
     pub file: ArtifactFile,
+    /// The release's notes. Not signed (they belong to the release and can
+    /// change after it): show them as plain text, never as markup.
+    pub notes: Option<String>,
     pub record: BuildRecord,
     /// Released with --required: older builds must update.
     pub required: bool,
@@ -49,6 +52,14 @@ pub struct Offer {
     /// Where the edge says to fetch `file`. What arrives is checked
     /// against the signed record, wherever it came from.
     pub url: String,
+}
+
+/// The release notes in an update response, if it has any worth showing.
+fn notes_of(body: &serde_json::Value) -> Option<String> {
+    body["notes"]
+        .as_str()
+        .filter(|notes| !notes.trim().is_empty())
+        .map(str::to_owned)
 }
 
 /// An offer whose artifact is downloaded and verified against the signed
@@ -203,6 +214,9 @@ impl Updater {
             .timeout_read(Duration::from_secs(60))
             .build();
         let smoke = SmokeReporter::from_env();
+        if smoke.is_some() {
+            smoke::report_panics(&identity);
+        }
         let cohort = install
             .as_ref()
             .and_then(|install| install.state.cohort.clone())
@@ -216,7 +230,14 @@ impl Updater {
             os_version: current_os_version(),
             smoke,
         };
-        updater.report("started", serde_json::json!({}));
+        updater.report(
+            "started",
+            serde_json::json!({
+                "appDir": updater.app_dir,
+                "cohort": updater.cohort(),
+                "selfUpdating": updater.install.is_some(),
+            }),
+        );
         Ok(updater)
     }
 
@@ -264,10 +285,42 @@ impl Updater {
         self.report("cohort-assigned", serde_json::json!({ "cohort": cohort }));
     }
 
-    pub(crate) fn report(&self, event: &str, data: serde_json::Value) {
+    /// Reports an event to a smoke test, if one is running (the app can add
+    /// its own, e.g. "window-shown"). Does nothing otherwise.
+    pub fn report(&self, event: &str, data: serde_json::Value) {
         if let Some(smoke) = &self.smoke {
             smoke.report(event, &self.identity, data);
         }
+    }
+
+    /// Reports events to the edge (POST /v2/{app}/events) for rollout
+    /// health: launches, healthy launches and update results. Best
+    /// effort: a report that fails is dropped, never retried.
+    pub fn send_events(&self, events: &[serde_json::Value]) {
+        let Some(install) = self.install.as_ref() else {
+            return;
+        };
+        let mut request = self
+            .agent
+            .post(&self.url("events"))
+            .set("x-td-platform", current_platform())
+            .set("x-td-arch", current_arch())
+            .set(
+                "x-td-current-build-number",
+                &self.identity.build_number.to_string(),
+            )
+            .set("x-td-install-id", &install.state.install_id);
+        if let Some(cohort) = self.cohort() {
+            request = request.set("x-td-channel", &cohort);
+        }
+        if let Err(err) = request.send_json(serde_json::json!({ "events": events })) {
+            eprintln!("todesktop-updater: events not reported: {err}");
+        }
+    }
+
+    /// An event about this build, as send_events() takes it.
+    pub fn build_event(&self, kind: &str) -> serde_json::Value {
+        serde_json::json!({ "kind": kind, "buildNumber": self.identity.build_number })
     }
 
     fn url(&self, path: &str) -> String {
@@ -296,7 +349,12 @@ impl Updater {
             request = request.set("x-td-os-version", version);
         }
         if let Some(cohort) = self.cohort() {
-            request = request.set("x-td-cohorts", &cohort);
+            // The cohort the install joined is its channel (beta, say). The
+            // edge treats an unknown name as stable, so older edges and
+            // apps without channels see no difference.
+            request = request
+                .set("x-td-channel", &cohort)
+                .set("x-td-cohorts", &cohort);
         }
         let body: serde_json::Value = request.call()?.into_json()?;
         if let Some(cohort) = body["cohort"].as_str() {
@@ -313,8 +371,12 @@ impl Updater {
             return Err("record is for another app".into());
         }
         // A lower build is only accepted with a signed rollback statement
-        // that covers exactly this install's build.
-        let rollback_id = if record.build_number > self.identity.build_number {
+        // that covers exactly this install's build. The same build only
+        // under a smoke test's "Next update", which reinstalls it.
+        let reinstall = record.build_number == self.identity.build_number
+            && SmokeMode::current().enabled
+            && SmokeMode::current().reinstall;
+        let rollback_id = if record.build_number > self.identity.build_number || reinstall {
             None
         } else {
             let signed: SignedRollbackStatement = serde_json::from_value(body["rollback"].clone())
@@ -347,6 +409,7 @@ impl Updater {
             .ok_or("offer has no download URL for its file")?
             .to_owned();
         let rollout_id = body["rolloutId"].as_str().map(str::to_owned);
+        let notes = notes_of(&body);
         self.report(
             "checked",
             serde_json::json!({
@@ -358,12 +421,35 @@ impl Updater {
         );
         Ok(Some(Offer {
             file,
+            notes,
             record,
             required: body["required"] == serde_json::Value::Bool(true),
             rollback_id,
             rollout_id,
             url,
         }))
+    }
+
+    /// How to start the build `apply()` put in place: the install's
+    /// `current` link (tarball), the replaced AppImage, or the swapped app
+    /// bundle through `open -n`. The new process gets this one's arguments
+    /// (without argv[0]) and environment.
+    pub fn launch_command(&self) -> Option<std::process::Command> {
+        let install = self.install.as_ref()?;
+        let args = std::env::args_os().skip(1);
+        let mut command = match &install.layout {
+            Layout::Tarball { root } => {
+                std::process::Command::new(root.join("current").join(&self.identity.executable))
+            }
+            Layout::AppImage { file } => std::process::Command::new(file),
+            Layout::AppBundle { bundle } => {
+                let mut open = std::process::Command::new("open");
+                open.arg("-n").arg(bundle).arg("--args");
+                open
+            }
+        };
+        command.args(args);
+        Some(command)
     }
 
     /// Downloads the offered artifact and checks it against the signed
@@ -426,6 +512,22 @@ impl Updater {
             }
         };
         std::fs::remove_file(&archive).ok();
+        let result = if applied.is_ok() {
+            "installed"
+        } else {
+            "failed"
+        };
+        let mut event = serde_json::json!({
+            "kind": "update",
+            "fromBuildNumber": self.identity.build_number,
+            "toBuildNumber": offer.record.build_number,
+            "result": result,
+        });
+        if let Err(err) = &applied {
+            // An error kind, not its text: no paths or personal data.
+            event["error"] = serde_json::json!(error_kind(err.as_ref()));
+        }
+        self.send_events(&[event]);
         let (dir, swap) = applied?;
         self.report(
             "installed",
@@ -435,6 +537,18 @@ impl Updater {
             }),
         );
         Ok(dir)
+    }
+}
+
+fn error_kind(err: &(dyn std::error::Error + Send + Sync + 'static)) -> &'static str {
+    match err
+        .downcast_ref::<std::io::Error>()
+        .map(std::io::Error::kind)
+    {
+        Some(std::io::ErrorKind::PermissionDenied) => "permission-denied",
+        Some(std::io::ErrorKind::StorageFull) => "disk-full",
+        Some(_) => "io",
+        None => "apply",
     }
 }
 
@@ -451,4 +565,21 @@ fn home_dir() -> Result<PathBuf> {
         .filter(|home| !home.is_empty())
         .map(PathBuf::from)
         .ok_or_else(|| "HOME is not set".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::notes_of;
+
+    #[test]
+    fn takes_notes_from_the_update_response() {
+        let body = serde_json::json!({ "notes": "Tray status icon\n- Faster reconnect" });
+        assert_eq!(
+            notes_of(&body).as_deref(),
+            Some("Tray status icon\n- Faster reconnect")
+        );
+        assert_eq!(notes_of(&serde_json::json!({ "notes": "  \n" })), None);
+        assert_eq!(notes_of(&serde_json::json!({ "notes": 3 })), None);
+        assert_eq!(notes_of(&serde_json::json!({})), None);
+    }
 }

@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Offer, PendingUpdate, Result, Updater};
+use crate::{Offer, PendingUpdate, Result, SmokeMode, Updater};
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -50,6 +50,10 @@ pub struct UpdatePolicy {
     pub download: UpdateDownload,
     pub install: UpdateInstall,
     pub urgent: UpdateUrgent,
+    /// How long a launch must run to count as healthy without the app
+    /// calling health_ready(). None: a minute.
+    #[serde(default)]
+    pub health_seconds: Option<u64>,
 }
 
 impl Default for UpdatePolicy {
@@ -59,6 +63,7 @@ impl Default for UpdatePolicy {
             download: UpdateDownload::Automatic,
             install: UpdateInstall::OnQuit,
             urgent: UpdateUrgent::CheckDaily,
+            health_seconds: None,
         }
     }
 }
@@ -82,7 +87,7 @@ impl UpdateInfo {
         Self {
             version: offer.record.version.clone(),
             build_number: offer.record.build_number,
-            notes: None,
+            notes: offer.notes.clone(),
             released_at: offer.record.created_at.clone(),
             size_bytes: offer.file.size,
             required: offer.required,
@@ -148,6 +153,8 @@ struct Inner {
     install_on_quit: AtomicBool,
     listeners: Mutex<Vec<Listener>>,
     relaunch: Mutex<Option<Relaunch>>,
+    /// This launch was reported healthy (health_ready() or the period).
+    healthy: AtomicBool,
     /// One check or download at a time.
     work: Mutex<()>,
 }
@@ -166,7 +173,14 @@ impl Updates {
         Self::with_policy(updater, policy)
     }
 
-    pub fn with_policy(updater: Updater, policy: UpdatePolicy) -> Self {
+    pub fn with_policy(updater: Updater, mut policy: UpdatePolicy) -> Self {
+        // Under a smoke test: check soon and often, install at once.
+        let smoke = SmokeMode::current();
+        if smoke.enabled {
+            policy.check_every_seconds = Some(smoke.check_seconds);
+            policy.download = UpdateDownload::Automatic;
+            policy.install = UpdateInstall::Immediately;
+        }
         let state = match managed_by(&updater) {
             Some(by) => UpdateState::Managed { by },
             None => UpdateState::Idle {
@@ -183,6 +197,7 @@ impl Updates {
                 install_on_quit: AtomicBool::new(false),
                 listeners: Mutex::new(Vec::new()),
                 relaunch: Mutex::new(None),
+                healthy: AtomicBool::new(false),
                 work: Mutex::new(()),
             }),
         }
@@ -192,6 +207,30 @@ impl Updates {
     /// exits for its supervisor (launchd, systemd) to start it.
     pub fn set_relaunch(&self, relaunch: impl Fn() + Send + Sync + 'static) {
         *lock(&self.inner.relaunch) = Some(Box::new(relaunch));
+    }
+
+    /// For apps nothing supervises (a desktop app the user started):
+    /// restart() starts the new version itself, with this process's
+    /// arguments and environment, then exits.
+    pub fn relaunch_by_spawning(&self) {
+        let updates = self.clone();
+        self.set_relaunch(move || {
+            let updater = &updates.inner.updater;
+            match updater.launch_command().map(|mut command| command.spawn()) {
+                Some(Ok(child)) => {
+                    updater.report("relaunching", serde_json::json!({ "pid": child.id() }));
+                }
+                Some(Err(err)) => {
+                    eprintln!("todesktop-updater: cannot start the new version: {err}");
+                    updater.report(
+                        "relaunch-failed",
+                        serde_json::json!({ "error": err.to_string() }),
+                    );
+                }
+                None => eprintln!("todesktop-updater: nothing to relaunch"),
+            }
+            std::process::exit(0);
+        });
     }
 
     pub fn policy(&self) -> &UpdatePolicy {
@@ -216,6 +255,7 @@ impl Updates {
         if self.is_managed() {
             return;
         }
+        self.report_launch();
         let policy = &self.inner.policy;
         let (every, urgent_only) = match (policy.check_every_seconds, policy.urgent) {
             (Some(seconds), _) => (seconds.max(1), false),
@@ -353,7 +393,12 @@ impl Updates {
         }
         match lock(&self.inner.relaunch).as_ref() {
             Some(relaunch) => relaunch(),
-            None => std::process::exit(0),
+            None => {
+                self.inner
+                    .updater
+                    .report("exiting", serde_json::json!({ "for": "update" }));
+                std::process::exit(0)
+            }
         }
         Ok(())
     }
@@ -405,7 +450,25 @@ impl Updates {
     /// The app says this launch works. Rollout health counts launches
     /// after an update that never say so as failed.
     pub fn health_ready(&self) {
+        if self.inner.healthy.swap(true, Ordering::SeqCst) {
+            return;
+        }
         self.inner.updater.report("healthy", serde_json::json!({}));
+        let updater = &self.inner.updater;
+        updater.send_events(&[updater.build_event("healthy")]);
+    }
+
+    /// Reports this launch; it counts as healthy once the app calls
+    /// health_ready() or has run for the health period (default a minute).
+    fn report_launch(&self) {
+        let updater = &self.inner.updater;
+        updater.send_events(&[updater.build_event("launch")]);
+        let period = self.inner.policy.health_seconds.unwrap_or(60);
+        let updates = self.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(period));
+            updates.health_ready();
+        });
     }
 
     fn is_managed(&self) -> bool {
