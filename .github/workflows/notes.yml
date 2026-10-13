@@ -5,6 +5,9 @@ on:
       version: { description: Version to release, required: true }
   push:
     tags: ['notes-v*']
+    # Or bump notes/VERSION on main.
+    branches: [main]
+    paths: [notes/VERSION]
 permissions:
   contents: read
   id-token: write # lets ToDesktop check this job is from this repository
@@ -30,7 +33,8 @@ jobs:
       - id: version
         run: |
           if [ -n "${{ inputs.version }}" ]; then echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          else ref="${{ github.ref_name }}"; echo "version=${ref#notes-v}" >> "$GITHUB_OUTPUT"; fi
+          elif [ "${{ github.ref_type }}" = tag ]; then ref="${{ github.ref_name }}"; echo "version=${ref#notes-v}" >> "$GITHUB_OUTPUT"
+          else echo "version=$(cat notes/VERSION)" >> "$GITHUB_OUTPUT"; fi
       - uses: ./.github/actions/todesktop-upload
         with:
           version: ${{ steps.version.outputs.version }}
