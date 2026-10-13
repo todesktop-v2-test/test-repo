@@ -7,7 +7,7 @@ on:
     tags: ['notes-v*']
     # Or bump notes/VERSION on main.
     branches: [main]
-    paths: [notes/VERSION]
+    paths: [notes/VERSION, .github/workflows/notes.yml]
 permissions:
   contents: read
   id-token: write # lets ToDesktop check this job is from this repository
