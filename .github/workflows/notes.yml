@@ -1,4 +1,5 @@
 name: Acme Notes
+# Builds the notes app on GitHub-hosted Ubuntu (x64 and arm64) and uploads it.
 on:
   workflow_dispatch:
     inputs:
