@@ -13,6 +13,15 @@ use todesktop_updater::{UpdateState, Updater, Updates};
 struct Note {
     title: String,
     body: String,
+    #[serde(default)]
+    pinned: bool,
+}
+
+/// notes.json since 1.1.0: versioned, so later formats can migrate.
+#[derive(Debug, Deserialize, Serialize)]
+struct NotesFile {
+    version: u32,
+    notes: Vec<Note>,
 }
 
 fn data_dir() -> PathBuf {
@@ -36,22 +45,28 @@ fn sample_notes() -> Vec<Note> {
         Note {
             title: "Groceries".into(),
             body: "Oat milk\nCoffee beans\nLemons\nSourdough".into(),
+            pinned: true,
         },
         Note {
             title: "Q3 planning".into(),
             body: "Ship search in the sidebar.\nMove sync to the new API.\nHire a second designer."
                 .into(),
+            pinned: false,
         },
         Note {
             title: "Reading list".into(),
             body: "The Design of Everyday Things\nA Philosophy of Software Design".into(),
+            pinned: false,
         },
     ]
 }
 
 fn load_notes() -> Vec<Note> {
     match std::fs::read_to_string(notes_file()) {
-        Ok(text) => serde_json::from_str(&text).expect("notes.json is not valid"),
+        Ok(text) => {
+            let file: NotesFile = serde_json::from_str(&text).expect("notes.json is not valid");
+            file.notes
+        }
         Err(_) => sample_notes(),
     }
 }
@@ -61,7 +76,11 @@ fn save_notes(notes: &[Note]) {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).ok();
     }
-    if let Ok(text) = serde_json::to_string_pretty(notes) {
+    let file = NotesFile {
+        version: 2,
+        notes: notes.to_vec(),
+    };
+    if let Ok(text) = serde_json::to_string_pretty(&file) {
         std::fs::write(path, text).ok();
     }
 }
@@ -69,6 +88,7 @@ fn save_notes(notes: &[Note]) {
 struct NotesApp {
     notes: Vec<Note>,
     selected: usize,
+    search: String,
     updates: Option<Updates>,
     version: String,
     frames: u64,
@@ -125,11 +145,29 @@ impl eframe::App for NotesApp {
                 ui.add_space(8.0);
                 ui.heading("Notes");
                 ui.add_space(8.0);
-                for (index, note) in self.notes.iter().enumerate() {
-                    let title = if note.title.is_empty() {
-                        "Untitled"
-                    } else {
-                        &note.title
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.search)
+                        .hint_text("Search notes")
+                        .desired_width(f32::INFINITY),
+                );
+                ui.add_space(8.0);
+                let query = self.search.to_lowercase();
+                let mut order: Vec<usize> = (0..self.notes.len())
+                    .filter(|&index| {
+                        let note = &self.notes[index];
+                        query.is_empty()
+                            || note.title.to_lowercase().contains(&query)
+                            || note.body.to_lowercase().contains(&query)
+                    })
+                    .collect();
+                // Pinned notes first.
+                order.sort_by_key(|&index| !self.notes[index].pinned);
+                for index in order {
+                    let note = &self.notes[index];
+                    let title = match (note.title.is_empty(), note.pinned) {
+                        (true, _) => "Untitled".to_owned(),
+                        (false, true) => format!("★ {}", note.title),
+                        (false, false) => note.title.clone(),
                     };
                     if ui
                         .selectable_label(index == self.selected, title)
@@ -143,6 +181,7 @@ impl eframe::App for NotesApp {
                     self.notes.push(Note {
                         title: String::new(),
                         body: String::new(),
+                        pinned: false,
                     });
                     self.selected = self.notes.len() - 1;
                     changed = true;
@@ -152,6 +191,7 @@ impl eframe::App for NotesApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(note) = self.notes.get_mut(self.selected) {
                 ui.add_space(8.0);
+                changed |= ui.checkbox(&mut note.pinned, "Pinned").changed();
                 changed |= ui
                     .add(
                         egui::TextEdit::singleline(&mut note.title)
@@ -206,6 +246,7 @@ fn main() -> eframe::Result {
     let app = NotesApp {
         notes,
         selected: 0,
+        search: String::new(),
         updates,
         version,
         frames: 0,
